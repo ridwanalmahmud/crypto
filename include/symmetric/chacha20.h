@@ -1,25 +1,51 @@
 #ifndef _CHACHA20_H
 #define _CHACHA20_H
 
-#include <assert.h>
-#include <stddef.h>
 #include <stdint.h>
-#include <string.h>
+#include <stddef.h>
 
-struct chacha20_context
-{
-	uint32_t keystream32[16];
-	size_t position;
+#define CHACHA20_KEY_SIZE 32
+#define CHACHA20_NONCE_SIZE 12
+#define CHACHA20_BLOCK_SIZE 64
 
-	uint8_t key[32];
-	uint8_t nonce[12];
-	uint64_t counter;
+typedef struct {
+    uint32_t state[16];
+    uint8_t keystream[CHACHA20_BLOCK_SIZE];
+    size_t position;
+} chacha20_ctx;
 
-	uint32_t state[16];
-};
+// Initialize a ChaCha20 context with key and nonce
+void chacha20_init(chacha20_ctx *ctx,
+                   const uint8_t *key,
+                   const uint8_t *nonce,
+                   uint32_t counter);
 
-void chacha20_init_context(struct chacha20_context *ctx, uint8_t key[], uint8_t nounc[], uint64_t counter);
+// Generate random key
+void chacha20_generate_key(uint8_t *key);
 
-void chacha20_xor(struct chacha20_context *ctx, uint8_t *bytes, size_t n_bytes);
+// Generate random nonce
+void chacha20_generate_nonce(uint8_t *nonce);
+
+// Encrypt/decrypt data using ChaCha20
+void chacha20_crypt(chacha20_ctx *ctx,
+                    const uint8_t *input,
+                    uint8_t *output,
+                    size_t len);
+
+// Encrypt data (convenience function)
+void chacha20_encrypt(const uint8_t *key,
+                      const uint8_t *nonce,
+                      uint32_t counter,
+                      const uint8_t *plaintext,
+                      uint8_t *ciphertext,
+                      size_t len);
+
+// Decrypt data (convenience function)
+void chacha20_decrypt(const uint8_t *key,
+                      const uint8_t *nonce,
+                      uint32_t counter,
+                      const uint8_t *ciphertext,
+                      uint8_t *plaintext,
+                      size_t len);
 
 #endif // !_CHACHA20_H

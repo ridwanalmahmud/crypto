@@ -1,0 +1,5 @@
+-I../include
+-Iutils
+-Wall
+-Wextra
+-pedantic

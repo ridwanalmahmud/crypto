@@ -1,120 +1,147 @@
 #include "symmetric/chacha20.h"
+#include <string.h>
+#include <stdlib.h>
+#include <time.h>
 
-static uint32_t rotl32(uint32_t x, int n) {
-    return (x << n) | (x >> (32 - n));
-}
+// Rotate left operation
+#define ROTL(a, b) (((a) << (b)) | ((a) >> (32 - (b))))
 
-static uint32_t pack4(const uint8_t *a) {
-    uint32_t res = 0;
-    res |= (uint32_t)a[0] << 0 * 8;
-    res |= (uint32_t)a[1] << 1 * 8;
-    res |= (uint32_t)a[2] << 2 * 8;
-    res |= (uint32_t)a[3] << 3 * 8;
-    return res;
-}
+// ChaCha20 quarter round
+#define QR(a, b, c, d) \
+    (a += b,           \
+     d ^= a,           \
+     d = ROTL(d, 16),  \
+     c += d,           \
+     b ^= c,           \
+     b = ROTL(b, 12),  \
+     a += b,           \
+     d ^= a,           \
+     d = ROTL(d, 8),   \
+     c += d,           \
+     b ^= c,           \
+     b = ROTL(b, 7))
 
-static void chacha20_init_block(struct chacha20_context *ctx,
-                                uint8_t key[],
-                                uint8_t nonce[]) {
-    memcpy(ctx->key, key, sizeof(ctx->key));
-    memcpy(ctx->nonce, nonce, sizeof(ctx->nonce));
+void chacha20_block(chacha20_ctx *ctx, uint32_t counter) {
+    uint32_t x[16];
 
-    const uint8_t *magic_constant = (uint8_t *)"expand 32-byte k";
-    ctx->state[0] = pack4(magic_constant + 0 * 4);
-    ctx->state[1] = pack4(magic_constant + 1 * 4);
-    ctx->state[2] = pack4(magic_constant + 2 * 4);
-    ctx->state[3] = pack4(magic_constant + 3 * 4);
-    ctx->state[4] = pack4(key + 0 * 4);
-    ctx->state[5] = pack4(key + 1 * 4);
-    ctx->state[6] = pack4(key + 2 * 4);
-    ctx->state[7] = pack4(key + 3 * 4);
-    ctx->state[8] = pack4(key + 4 * 4);
-    ctx->state[9] = pack4(key + 5 * 4);
-    ctx->state[10] = pack4(key + 6 * 4);
-    ctx->state[11] = pack4(key + 7 * 4);
-    // 64 bit counter initialized to zero by default.
-    ctx->state[12] = 0;
-    ctx->state[13] = pack4(nonce + 0 * 4);
-    ctx->state[14] = pack4(nonce + 1 * 4);
-    ctx->state[15] = pack4(nonce + 2 * 4);
+    // Copy state to working variables
+    for (int i = 0; i < 16; i++) {
+        x[i] = ctx->state[i];
+    }
 
-    memcpy(ctx->nonce, nonce, sizeof(ctx->nonce));
-}
+    // Set block counter
+    x[12] = counter;
 
-static void chacha20_block_set_counter(struct chacha20_context *ctx,
-                                       uint64_t counter) {
-    ctx->state[12] = (uint32_t)counter;
-    ctx->state[13] = pack4(ctx->nonce + 0 * 4) + (uint32_t)(counter >> 32);
-}
-
-static void chacha20_block_next(struct chacha20_context *ctx) {
-    // This is where the crazy voodoo magic happens.
-    // Mix the bytes a lot and hope that nobody finds out how to undo it.
-    for (int i = 0; i < 16; i++)
-        ctx->keystream32[i] = ctx->state[i];
-
-#define CHACHA20_QUARTERROUND(x, a, b, c, d) \
-    x[a] += x[b];                            \
-    x[d] = rotl32(x[d] ^ x[a], 16);          \
-    x[c] += x[d];                            \
-    x[b] = rotl32(x[b] ^ x[c], 12);          \
-    x[a] += x[b];                            \
-    x[d] = rotl32(x[d] ^ x[a], 8);           \
-    x[c] += x[d];                            \
-    x[b] = rotl32(x[b] ^ x[c], 7);
-
+    // 10 iterations = 20 rounds
     for (int i = 0; i < 10; i++) {
-        CHACHA20_QUARTERROUND(ctx->keystream32, 0, 4, 8, 12)
-        CHACHA20_QUARTERROUND(ctx->keystream32, 1, 5, 9, 13)
-        CHACHA20_QUARTERROUND(ctx->keystream32, 2, 6, 10, 14)
-        CHACHA20_QUARTERROUND(ctx->keystream32, 3, 7, 11, 15)
-        CHACHA20_QUARTERROUND(ctx->keystream32, 0, 5, 10, 15)
-        CHACHA20_QUARTERROUND(ctx->keystream32, 1, 6, 11, 12)
-        CHACHA20_QUARTERROUND(ctx->keystream32, 2, 7, 8, 13)
-        CHACHA20_QUARTERROUND(ctx->keystream32, 3, 4, 9, 14)
+        // Column rounds
+        QR(x[0], x[4], x[8], x[12]);
+        QR(x[1], x[5], x[9], x[13]);
+        QR(x[2], x[6], x[10], x[14]);
+        QR(x[3], x[7], x[11], x[15]);
+
+        // Diagonal rounds
+        QR(x[0], x[5], x[10], x[15]);
+        QR(x[1], x[6], x[11], x[12]);
+        QR(x[2], x[7], x[8], x[13]);
+        QR(x[3], x[4], x[9], x[14]);
     }
 
-    for (int i = 0; i < 16; i++)
-        ctx->keystream32[i] += ctx->state[i];
+    // Add working state to original state
+    for (int i = 0; i < 16; i++) {
+        x[i] += ctx->state[i];
+    }
 
-    uint32_t *counter = ctx->state + 12;
-    // increment counter
-    counter[0]++;
-    if (0 == counter[0]) {
-        // wrap around occured, increment higher 32 bits of counter
-        counter[1]++;
-        // Limited to 2^64 blocks of 64 bytes each.
-        // If you want to process more than 1180591620717411303424 bytes
-        // you have other problems.
-        // We could keep counting with counter[2] and counter[3] (nonce),
-        // but then we risk reusing the nonce which is very bad.
-        assert(0 != counter[1]);
+    // Convert to little-endian byte array
+    for (int i = 0; i < 16; i++) {
+        ctx->keystream[i * 4 + 0] = (uint8_t)(x[i] >> 0);
+        ctx->keystream[i * 4 + 1] = (uint8_t)(x[i] >> 8);
+        ctx->keystream[i * 4 + 2] = (uint8_t)(x[i] >> 16);
+        ctx->keystream[i * 4 + 3] = (uint8_t)(x[i] >> 24);
+    }
+
+    ctx->position = 0;
+}
+
+void chacha20_init(chacha20_ctx *ctx,
+                   const uint8_t *key,
+                   const uint8_t *nonce,
+                   uint32_t counter) {
+    // Constants
+    ctx->state[0] = 0x61707865;
+    ctx->state[1] = 0x3320646e;
+    ctx->state[2] = 0x79622d32;
+    ctx->state[3] = 0x6b206574;
+
+    // Key
+    for (int i = 0; i < 8; i++) {
+        ctx->state[4 + i] =
+            ((uint32_t)key[i * 4 + 0] << 0) | ((uint32_t)key[i * 4 + 1] << 8) |
+            ((uint32_t)key[i * 4 + 2] << 16) | ((uint32_t)key[i * 4 + 3] << 24);
+    }
+
+    // Counter
+    ctx->state[12] = counter;
+
+    // Nonce
+    for (int i = 0; i < 3; i++) {
+        ctx->state[13 + i] = ((uint32_t)nonce[i * 4 + 0] << 0) |
+                             ((uint32_t)nonce[i * 4 + 1] << 8) |
+                             ((uint32_t)nonce[i * 4 + 2] << 16) |
+                             ((uint32_t)nonce[i * 4 + 3] << 24);
+    }
+
+    ctx->position = CHACHA20_BLOCK_SIZE; // Force block generation on first use
+}
+
+void chacha20_generate_key(uint8_t *key) {
+    srand(time(NULL));
+    for (size_t i = 0; i < CHACHA20_KEY_SIZE; i++) {
+        key[i] = rand() & 0xFF;
     }
 }
 
-void chacha20_init_context(struct chacha20_context *ctx,
-                           uint8_t key[],
-                           uint8_t nonce[],
-                           uint64_t counter) {
-    memset(ctx, 0, sizeof(struct chacha20_context));
-
-    chacha20_init_block(ctx, key, nonce);
-    chacha20_block_set_counter(ctx, counter);
-
-    ctx->counter = counter;
-    ctx->position = 64;
+void chacha20_generate_nonce(uint8_t *nonce) {
+    srand(time(NULL));
+    for (size_t i = 0; i < CHACHA20_NONCE_SIZE; i++) {
+        nonce[i] = rand() & 0xFF;
+    }
 }
 
-void chacha20_xor(struct chacha20_context *ctx,
-                  uint8_t *bytes,
-                  size_t n_bytes) {
-    uint8_t *keystream8 = (uint8_t *)ctx->keystream32;
-    for (size_t i = 0; i < n_bytes; i++) {
-        if (ctx->position >= 64) {
-            chacha20_block_next(ctx);
+void chacha20_crypt(chacha20_ctx *ctx,
+                    const uint8_t *input,
+                    uint8_t *output,
+                    size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        if (ctx->position >= CHACHA20_BLOCK_SIZE) {
+            chacha20_block(ctx, ctx->state[12]);
+            ctx->state[12]++;
             ctx->position = 0;
         }
-        bytes[i] ^= keystream8[ctx->position];
+
+        output[i] = input[i] ^ ctx->keystream[ctx->position];
         ctx->position++;
     }
+}
+
+void chacha20_encrypt(const uint8_t *key,
+                      const uint8_t *nonce,
+                      uint32_t counter,
+                      const uint8_t *plaintext,
+                      uint8_t *ciphertext,
+                      size_t len) {
+    chacha20_ctx ctx;
+    chacha20_init(&ctx, key, nonce, counter);
+    chacha20_crypt(&ctx, plaintext, ciphertext, len);
+}
+
+void chacha20_decrypt(const uint8_t *key,
+                      const uint8_t *nonce,
+                      uint32_t counter,
+                      const uint8_t *ciphertext,
+                      uint8_t *plaintext,
+                      size_t len) {
+    chacha20_ctx ctx;
+    chacha20_init(&ctx, key, nonce, counter);
+    chacha20_crypt(&ctx, ciphertext, plaintext, len);
 }
