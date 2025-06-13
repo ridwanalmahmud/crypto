@@ -1,4 +1,4 @@
--Iinclude
+-Iinclude/libcrypto
 -std=c11
 -Wall
 -Wextra

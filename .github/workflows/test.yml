@@ -1,16 +1,16 @@
-name: Crypto CI
+name: Crypto CI/CD
 
 on:
   push:
-    branches: [ master ]
+    tags: ['v*.*.*']  # Trigger on version tags (e.g., v1.0.0)
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 jobs:
-  build-and-test:
+  build-and-release:
     runs-on: ubuntu-latest
     env:
-      TERM: xterm-256color  # Enable color output
+      VERSION: ${GITHUB_REF#refs/tags/v}  # Extracts version from tag (v1.0.0 → 1.0.0)
 
     steps:
     - name: Checkout code
@@ -19,36 +19,54 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install build-essential -y
-        sudo apt-get install clang make -y
+        sudo apt-get install -y build-essential clang
 
-    - name: Build project
+    - name: Build
       run: |
-        make clean
-        mkdir -p build
-        make
-
-    - name: Build tests
-      run: |
-        cd tests
         make clean
         make
 
     - name: Run tests
       run: |
-        # Capture colored output correctly
-        echo "::add-matcher::.github/test-matcher.json"
-        cd tests && stdbuf -oL make test | tee test-output.log
-        echo "::remove-matcher owner=test-matcher::"
+        cd tests && make clean && make && make test
 
-        # Fail if any tests failed
-        if grep -q "SOME TESTS FAILED" test-output.log; then
-          exit 1
-        fi
+    - name: Package artifacts
+      run: |
+        mkdir -p dist/{lib,include}
 
-    - name: Upload test results
-      if: always()
+        # Library files
+        cp build/libcrypto.so.$VERSION dist/lib/
+        cp build/libcrypto.a dist/lib/
+
+        # Headers (preserve structure)
+        cp -r include/* dist/include/
+
+        # Create simple pkg-config file
+        cat > dist/libcrypto.pc <<EOF
+        prefix=/usr/local
+        libdir=\${prefix}/lib
+        includedir=\${prefix}/include
+
+        Name: libcrypto
+        Description: Educational crypto library
+        Version: $VERSION
+        Libs: -L\${libdir} -lcrypto
+        Cflags: -I\${includedir}
+        EOF
+
+    - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: test-results
-        path: test-output.log
+        name: libcrypto-${{ env.VERSION }}-linux
+        path: dist/
+        retention-days: 1
+
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref }}
+        files: |
+          dist/lib/*
+          dist/include/*
+          dist/libcrypto.pc

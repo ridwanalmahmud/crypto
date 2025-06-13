@@ -1,5 +1,5 @@
 PROJECT      := libcrypto
-VERSION      := 1.0.0
+VERSION      := 1.0.3
 LIB_NAME     := $(PROJECT).a
 SHARED_LIB   := $(PROJECT).so.$(VERSION)
 
@@ -8,7 +8,7 @@ CC           := gcc
 AR           := ar
 CFLAGS       := -std=c11 -Wall -Wextra -pedantic \
                 -fstack-protector-strong -D_FORTIFY_SOURCE=2 \
-                -fPIC -O2 -Iinclude
+                -fPIC -O2 -Iinclude/$(PROJECT)
 LDFLAGS      := -Wl,-z,now,-z,relro
 ARFLAGS      := rcs
 
@@ -28,7 +28,7 @@ endif
 SRC_DIR      := src
 BUILD_DIR    := build
 TEST_DIR     := tests
-INCLUDE_DIR  := include
+INCLUDE_DIR  := include/$(PROJECT)
 
 # Source Files
 SRCS         := $(shell find $(SRC_DIR) -name '*.c')
@@ -70,10 +70,13 @@ clean:
 
 # Install (System-Wide)
 install: shared
-	install -Dm755 $(BUILD_DIR)/$(SHARED_LIB) /usr/local/lib/$(SHARED_LIB)
-	ln -sf $(SHARED_LIB) /usr/local/lib/$(PROJECT).so
-	install -Dm644 include/crypto/*.h /usr/local/include/crypto/
-	ldconfig
+	@echo "Installing to /usr/local (requires sudo)"
+	sudo mkdir -p /usr/local/lib
+	sudo install -m755 $(BUILD_DIR)/$(SHARED_LIB) /usr/local/lib/$(SHARED_LIB)
+	sudo ln -sf $(SHARED_LIB) /usr/local/lib/$(PROJECT).so
+	sudo mkdir -p /usr/local/$(INCLUDE_DIR)
+	sudo cp -r $(INCLUDE_DIR)/* /usr/local/include/libcrypto/
+	sudo ldconfig
 
 # Help
 help:

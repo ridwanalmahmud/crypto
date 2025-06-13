@@ -1,4 +1,4 @@
--I../include
+-I../include/libcrypto
 -Iutils
 -Wall
 -Wextra

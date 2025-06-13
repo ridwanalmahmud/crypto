@@ -1,6 +1,6 @@
 CC      := clang
-CFLAGS  := -Wall -Wextra -pedantic -O2 --target=$(shell uname -m)-linux-gnu
-INCDIRS := -I../include -Iutils
+CFLAGS  := -Wall -Wextra -pedantic -O2
+INCDIRS := -I../include/libcrypto -Iutils
 UTILDIR := utils
 SRCDIR  := ../src
 
