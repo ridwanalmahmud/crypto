@@ -33,7 +33,7 @@ void test_decrypt_wrapper(void *args) {
                      targs->len);
 }
 
-void test_basic_encryption_decryption() {
+void test_basic_encryption_decryption(void) {
     printf("=== Basic Encryption/Decryption Test ===\n");
 
     uint8_t key[CHACHA20_KEY_SIZE] = {
@@ -68,7 +68,7 @@ void test_basic_encryption_decryption() {
     printf("\n");
 }
 
-void test_random_key_nonce() {
+void test_random_key_nonce(void) {
     printf("=== Random Key/Nonce Test ===\n");
 
     uint8_t key[CHACHA20_KEY_SIZE];
@@ -102,7 +102,7 @@ void test_random_key_nonce() {
     printf("\n");
 }
 
-void test_empty_message() {
+void test_empty_message(void) {
     printf("=== Empty Message Test ===\n");
 
     uint8_t key[CHACHA20_KEY_SIZE];
@@ -126,7 +126,7 @@ void test_empty_message() {
     printf("\n");
 }
 
-void test_large_message_performance() {
+void test_large_message_performance(void) {
     printf("=== Large Message Performance Test ===\n");
 
     size_t len = 1024 * 1024; // 1MB
@@ -165,7 +165,7 @@ void test_large_message_performance() {
     free(ciphertext);
 }
 
-int main() {
+int main(void) {
     // Initialize random number generator
     srand(time(NULL));
 
