@@ -32,13 +32,13 @@ jobs:
       run: |
         cd tests
         make clean
-        make test
+        make
 
     - name: Run tests
       run: |
         # Capture colored output correctly
         echo "::add-matcher::.github/test-matcher.json"
-        stdbuf -oL make test | tee test-output.log
+        cd tests && stdbuf -oL make test | tee test-output.log
         echo "::remove-matcher owner=test-matcher::"
 
         # Fail if any tests failed
