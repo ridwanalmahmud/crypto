@@ -1,65 +1,85 @@
-# Compiler and flags
-CC = clang
-INCDIRS = -I$(CURDIR)/include
-OPT = -O1
+PROJECT      := libcrypto
+VERSION      := 1.0.0
+LIB_NAME     := $(PROJECT).a
+SHARED_LIB   := $(PROJECT).so.$(VERSION)
 
-CFLAGS = -Wall -Wextra -g $(INCDIRS) $(OPT) --target=$(shell uname -m)-linux-gnu
+# Toolchain
+CC           := gcc
+AR           := ar
+CFLAGS       := -std=c11 -Wall -Wextra -pedantic \
+                -fstack-protector-strong -D_FORTIFY_SOURCE=2 \
+                -fPIC -O2 -Iinclude
+LDFLAGS      := -Wl,-z,now,-z,relro
+ARFLAGS      := rcs
 
-# Directories
-SRC_DIR = src
-OBJ_DIR = obj
-BIN_DIR = bin
-TEST_DIR = tests
-TEST_OBJ_DIR = $(TEST_DIR)/obj
+# Platform-Specific Optimizations
+UNAME_S      := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+    CFLAGS   += -D_GNU_SOURCE
+    LDFLAGS  += -ldl
+endif
 
-# Files
-SRCS = $(wildcard $(SRC_DIR)/*.c)
-OBJS = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
-TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
-TEST_OBJS = $(patsubst $(TEST_DIR)/%.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRCS))
+# Hardware Acceleration
+ifeq ($(shell uname -m),x86_64)
+    CFLAGS   += -maes -msse4.1 -mpclmul
+endif
 
-# Executables
-EXEC = $(BIN_DIR)/db
-TEST_EXEC = $(BIN_DIR)/dbtest
+# Directory Structure
+SRC_DIR      := src
+BUILD_DIR    := build
+TEST_DIR     := tests
+INCLUDE_DIR  := include
 
-.PHONY: all build-test test clean
+# Source Files
+SRCS         := $(shell find $(SRC_DIR) -name '*.c')
+OBJS         := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SRCS))
+DEPS         := $(OBJS:.o=.d)
 
-all: $(EXEC)
+# Main Targets
+.PHONY: all static shared tests clean fuzz
 
-# Main executable
-$(EXEC): $(OBJS) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $^ -o $@
+all: static shared
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+static: $(BUILD_DIR)/$(LIB_NAME)
 
-# Test executable
-build-test: $(TEST_EXEC)
+shared: $(BUILD_DIR)/$(SHARED_LIB)
 
-$(TEST_EXEC): $(TEST_OBJS) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $^ -o $@
+# Static Library
+$(BUILD_DIR)/$(LIB_NAME): $(OBJS)
+	@mkdir -p $(@D)
+	$(AR) $(ARFLAGS) $@ $^
+	ranlib $@
 
-$(TEST_OBJ_DIR)/%.o: $(TEST_DIR)/%.c | $(TEST_OBJ_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# Shared Library
+$(BUILD_DIR)/$(SHARED_LIB): $(OBJS)
+	@mkdir -p $(@D)
+	$(CC) -shared $(LDFLAGS) $^ -o $@
+	ln -sf $(SHARED_LIB) $(BUILD_DIR)/$(PROJECT).so
 
-# Directory creation
-$(BIN_DIR) $(OBJ_DIR) $(TEST_OBJ_DIR):
-	mkdir -p $@
+# Pattern Rules
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-# Test command
-test: build-test
-	@$(TEST_EXEC)
+# Include Dependencies
+-include $(DEPS)
 
-clean-obj:
-	rm -rf $(OBJ_DIR) $(TEST_OBJ_DIR)
+# Clean
+clean:
+	rm -rf $(BUILD_DIR)
 
-clean-test:
-	rm -rf $(TEST_EXEC) $(TEST_OBJ_DIR)
+# Install (System-Wide)
+install: shared
+	install -Dm755 $(BUILD_DIR)/$(SHARED_LIB) /usr/local/lib/$(SHARED_LIB)
+	ln -sf $(SHARED_LIB) /usr/local/lib/$(PROJECT).so
+	install -Dm644 include/crypto/*.h /usr/local/include/crypto/
+	ldconfig
 
-clean: clean-obj clean-test
-	rm -rf $(BIN_DIR)
-	@echo "All build artifacts removed"
-
-# Handle arguments
-%:
-	@:
+# Help
+help:
+	@echo "Build targets:"
+	@echo "  all       - Build static and shared libraries (default)"
+	@echo "  static    - Build static library ($(LIB_NAME))"
+	@echo "  shared    - Build shared library ($(SHARED_LIB))"
+	@echo "  install   - Install system-wide"
+	@echo "  clean     - Remove build artifacts"
