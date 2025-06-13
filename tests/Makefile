@@ -1,5 +1,5 @@
 CC      := clang
-CFLAGS  := -Wall -Wextra -pedantic -O2
+CFLAGS  := -Wall -Wextra -pedantic -O2 --target=$(shell uname -m)-linux-gnu
 INCDIRS := -I../include -Iutils
 UTILDIR := utils
 SRCDIR  := ../src
