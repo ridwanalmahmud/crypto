@@ -2,7 +2,7 @@ name: CI Build, Test, and Package
 on:
   push:
     branches: [main]
-    tags: ['v*'] # Triggers on version tags (v1.1.1)
+    tags: ['v*']
   pull_request:
     branches: [main]
 jobs:
@@ -18,19 +18,22 @@ jobs:
             clang \
             make \
             build-essential \
-            binutils
-      - name: Build with debug info
+            tree
+      - name: Build
         run: |
+          make clean
           mkdir -p build
-          make -j$(nproc) V=1 2>&1 | tee build.log
+          make -j$(nproc)
           echo "Build artifacts:"
           ls -l build/
+      - name: Verify headers exist
+        run: |
+          echo "Header files:"
+          ls -l include/ || echo "No include directory found"
+          [ -d "include" ] || mkdir -p include
       - name: Run tests
         run: |
-          cd tests
-          make clean
-          make
-          make test
+          cd tests && make clean && make && make test
   package:
     needs: build-and-test
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -38,27 +41,18 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang \
-            make \
-            tree
-      - name: Rebuild for packaging
-        run: |
-          make clean
-          mkdir -p build
-          make -j$(nproc)
-      - name: Verify build artifacts
-        run: |
-          echo "Build directory contents:"
-          ls -l build/
-          [ -f "build/libcrypto.a" ] || echo "Error: libcrypto.a missing!"
-          ls build/libcrypto.so* || echo "Error: No libcrypto.so files found!"
-      - name: Package artifacts
+      - name: Prepare packaging
         run: |
           mkdir -p dist/{lib,include}
+
+          # Verify and copy headers
+          if [ -d "include" ]; then
+            echo "Copying headers from include/"
+            cp -r include/* dist/include/ || echo "No headers to copy"
+          else
+            echo "Warning: include/ directory not found"
+            mkdir -p dist/include
+          fi
 
           # Static library
           if [ -f "build/libcrypto.a" ]; then
@@ -68,24 +62,22 @@ jobs:
           fi
 
           # Shared libraries
-          for sofile in build/libcrypto.so*; do
-            [ -e "$sofile" ] && cp "$sofile" dist/lib/
-          done
-
-          # Create symlink
-          cd dist/lib && \
-          sofile=$(ls libcrypto.so.* | head -n1) && \
-          ln -sf "$sofile" libcrypto.so
-
-          # Headers
-          cp -r include/libcrypto/* dist/include/
+          if ls build/libcrypto.so* 1>/dev/null 2>&1; then
+            cp build/libcrypto.so* dist/lib/
+            cd dist/lib && \
+            sofile=$(ls libcrypto.so.* | head -n1) && \
+            ln -sf "$sofile" libcrypto.so
+          else
+            echo "Error: No shared libraries found"
+            exit 1
+          fi
 
           # pkg-config
           VERSION=${GITHUB_REF#refs/tags/v}
           cat > dist/libcrypto.pc <<EOF
           prefix=/usr/local
           libdir=\${prefix}/lib
-          includedir=\${prefix}/include/libcrypto
+          includedir=\${prefix}/include
 
           Name: libcrypto
           Description: Educational crypto library
@@ -94,7 +86,7 @@ jobs:
           Cflags: -I\${includedir}
           EOF
 
-          echo "Package contents:"
+          echo "Final package contents:"
           tree dist/
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -103,9 +95,10 @@ jobs:
           path: dist/
       - name: Create release
         uses: softprops/action-gh-release@v1
+        if: success()
         with:
           tag_name: ${{ github.ref }}
           files: |
-            dist/lib/libcrypto.*
-            dist/include/**
+            dist/lib/*
+            dist/include/*
             dist/libcrypto.pc
