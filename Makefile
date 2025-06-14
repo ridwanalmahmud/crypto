@@ -1,5 +1,5 @@
 PROJECT      := libcrypto
-VERSION      := 1.0.3
+VERSION      := 1.1.1
 LIB_NAME     := $(PROJECT).a
 SHARED_LIB   := $(PROJECT).so.$(VERSION)
 

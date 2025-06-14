@@ -30,5 +30,5 @@ test: all
 # $(SHA_TEST)
 
 clean:
-	rm -f $(CHA_TEST) 
+	rm -f $(CHA_TEST)
 # $(SHA_TEST)

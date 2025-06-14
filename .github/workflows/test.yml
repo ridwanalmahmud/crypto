@@ -1,72 +1,99 @@
-name: Crypto CI/CD
-
+name: CI Build, Test, and Package
 on:
   push:
-    tags: ['v*.*.*']  # Trigger on version tags (e.g., v1.0.0)
+    branches: [main]
+    tags: ['v*'] # Triggers on tags like v1.1.0
   pull_request:
-    branches: [master]
-
+    branches: [main]
 jobs:
-  build-and-release:
+  build-and-test:
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${GITHUB_REF#refs/tags/v}  # Extracts version from tag (v1.0.0 → 1.0.0)
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang make
+      - name: Build
+        run: |
+          mkdir -p build
+          make clean
+          make -j$(nproc)
+      - name: Run tests
+        run: |
+          cd tests && make clean && make && make test
+  package:
+    needs: build-and-test
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang make
+      - name: Build (for packaging)
+        run: |
+          mkdir -p build
+          make -j$(nproc)
+      - name: Determine version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Detected version: ${VERSION}"
+      - name: Verify files exist
+        run: |
+          echo "Checking build directory:"
+          ls -l build/
+          if [ ! -f "build/libcrypto.so" ] && [ ! -f "build/libcrypto.a" ]; then
+            echo "Error: Missing built libraries!"
+            exit 1
+          fi
+      - name: Package artifacts
+        run: |
+          mkdir -p dist/{lib,include}
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential clang
+          # Copy libraries (handle both versioned and unversioned .so)
+          if [ -f "build/libcrypto.so.$VERSION" ]; then
+            cp build/libcrypto.so.$VERSION dist/lib/
+            cd dist/lib && ln -s libcrypto.so.$VERSION libcrypto.so
+          else
+            cp build/libcrypto.so dist/lib/
+          fi
+          cp build/libcrypto.a dist/lib/
 
-    - name: Build
-      run: |
-        make clean
-        make
+          # Copy headers
+          cp -r include/* dist/include/
 
-    - name: Run tests
-      run: |
-        cd tests && make clean && make && make test
+          # Generate pkg-config file
+          cat > dist/libcrypto.pc <<EOF
+          prefix=/usr/local
+          libdir=\${prefix}/lib
+          includedir=\${prefix}/include
 
-    - name: Package artifacts
-      run: |
-        mkdir -p dist/{lib,include}
+          Name: libcrypto
+          Description: Educational crypto library
+          Version: $VERSION
+          Libs: -L\${libdir} -lcrypto
+          Cflags: -I\${includedir}
+          EOF
 
-        # Library files
-        cp build/libcrypto.so.$VERSION dist/lib/
-        cp build/libcrypto.a dist/lib/
-
-        # Headers (preserve structure)
-        cp -r include/* dist/include/
-
-        # Create simple pkg-config file
-        cat > dist/libcrypto.pc <<EOF
-        prefix=/usr/local
-        libdir=\${prefix}/lib
-        includedir=\${prefix}/include
-
-        Name: libcrypto
-        Description: Educational crypto library
-        Version: $VERSION
-        Libs: -L\${libdir} -lcrypto
-        Cflags: -I\${includedir}
-        EOF
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: libcrypto-${{ env.VERSION }}-linux
-        path: dist/
-        retention-days: 1
-
-    - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.ref }}
-        files: |
-          dist/lib/*
-          dist/include/*
-          dist/libcrypto.pc
+          echo "Packaged contents:"
+          tree dist/
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcrypto-${{ env.VERSION }}
+          path: dist/
+      - name: Create GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref }}
+          files: |
+            dist/lib/*
+            dist/include/*
+            dist/libcrypto.pc
