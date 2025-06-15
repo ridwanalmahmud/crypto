@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Show repository structure
+        run: tree -L 2
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -23,14 +25,18 @@ jobs:
         run: |
           make clean
           mkdir -p build
-          make -j$(nproc)
+          make -j$(nproc) V=1
           echo "Build artifacts:"
           ls -l build/
-      - name: Verify headers exist
+      - name: Verify headers
         run: |
-          echo "Header files:"
-          ls -l include/ || echo "No include directory found"
-          [ -d "include" ] || mkdir -p include
+          if [ -d "include" ]; then
+            echo "Header files found:"
+            ls -l include/
+          else
+            echo "Warning: include/ directory not found - creating empty directory"
+            mkdir -p include
+          fi
       - name: Run tests
         run: |
           cd tests && make clean && make && make test
@@ -41,39 +47,48 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Prepare packaging
+      - name: Install packaging tools
+        run: sudo apt-get install -y tree
+      - name: Prepare directories
         run: |
           mkdir -p dist/{lib,include}
-
-          # Verify and copy headers
-          if [ -d "include" ]; then
-            echo "Copying headers from include/"
-            cp -r include/* dist/include/ || echo "No headers to copy"
+          echo "Directory structure prepared:"
+          tree dist/
+      - name: Package artifacts
+        run: |
+          # 1. Copy headers if they exist
+          if [ -d "include" ] && [ "$(ls -A include)" ]; then
+            echo "Copying headers..."
+            cp -r include/* dist/include/
           else
-            echo "Warning: include/ directory not found"
-            mkdir -p dist/include
+            echo "Warning: No headers to copy"
           fi
 
-          # Static library
+          # 2. Copy static library
           if [ -f "build/libcrypto.a" ]; then
+            echo "Copying static library..."
             cp build/libcrypto.a dist/lib/
           else
             echo "Warning: Static library not found"
           fi
 
-          # Shared libraries
+          # 3. Handle shared libraries
           if ls build/libcrypto.so* 1>/dev/null 2>&1; then
+            echo "Copying shared libraries..."
             cp build/libcrypto.so* dist/lib/
-            cd dist/lib && \
-            sofile=$(ls libcrypto.so.* | head -n1) && \
+            cd dist/lib
+            sofile=$(ls libcrypto.so.* | head -n1)
             ln -sf "$sofile" libcrypto.so
+            cd -
           else
-            echo "Error: No shared libraries found"
+            echo "Error: No shared libraries found in build/"
+            ls -l build/
             exit 1
           fi
 
-          # pkg-config
+          # 4. Create pkg-config file
           VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Creating pkg-config file for version $VERSION"
           cat > dist/libcrypto.pc <<EOF
           prefix=/usr/local
           libdir=\${prefix}/lib
@@ -86,16 +101,19 @@ jobs:
           Cflags: -I\${includedir}
           EOF
 
+          # 5. Verify package
           echo "Final package contents:"
           tree dist/
+          echo "pkg-config file contents:"
+          cat dist/libcrypto.pc
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: libcrypto-${{ github.ref_name }}
           path: dist/
       - name: Create release
-        uses: softprops/action-gh-release@v1
         if: success()
+        uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref }}
           files: |
