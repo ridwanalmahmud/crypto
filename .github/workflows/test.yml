@@ -1,66 +1,96 @@
-name: Crypto CI/CD
+name: CI Build, Test, and Package
 on:
   push:
-    tags: ['v*.*.*'] # Trigger on version tags (e.g., v1.0.0)
+    branches: [main]
+    tags: ['v*']
   pull_request:
-    branches: [master]
+    branches: [main]
 jobs:
-  build-and-release:
+  build-and-test:
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${GITHUB_REF#refs/tags/v} # Extracts version from tag (v1.0.0 → 1.0.0)
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang
-      - name: Build
+          sudo apt-get install -y \
+            clang \
+            make \
+            build-essential \
+            tree
+      - name: Build with debug output
         run: |
-          make clean
-          make
+          mkdir -p build
+          make -j$(nproc) V=1
+          echo "Build artifacts:"
+          ls -l build/
+      - name: Verify build outputs
+        run: |
+          [ -f "build/libcrypto.a" ] || echo "Warning: Static library not built yet"
+          ls build/libcrypto.so* || echo "Warning: Shared library not built yet"
+          [ -d "include" ] || echo "Warning: Include directory not found"
       - name: Run tests
         run: |
-          cd tests && make clean && make && make test
-      - name: Verify build artifacts
+          cd tests && make test
+  package:
+    needs: build-and-test
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Rebuild for packaging
         run: |
-          echo "Build directory contents:"
-          ls -l build/
-          echo "Include directory contents:"
-          ls -l include/
+          make clean
+          mkdir -p build
+          make -j$(nproc)
+      - name: Determine version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Building version: ${VERSION}"
       - name: Package artifacts
         run: |
-          # Create distribution directories
-          mkdir -p dist/{lib,include}
+          # Create directory structure
+          mkdir -p dist/{lib,include,pkgconfig}
 
-          # Copy libraries (with error handling)
-          if [ -f "build/libcrypto.so.$VERSION" ]; then
-            cp build/libcrypto.so.$VERSION dist/lib/
-            ln -s libcrypto.so.$VERSION dist/lib/libcrypto.so
+          # Handle shared libraries (more flexible matching)
+          SHARED_LIB=$(ls build/libcrypto.so* 2>/dev/null | head -n1)
+          if [ -n "$SHARED_LIB" ]; then
+            echo "Found shared library: $SHARED_LIB"
+            cp "$SHARED_LIB" dist/lib/
+            LIB_NAME=$(basename "$SHARED_LIB")
+            cd dist/lib
+            ln -sf "$LIB_NAME" libcrypto.so
+            cd -
           else
-            echo "Error: Shared library not found!"
+            echo "Error: No shared library found in build/"
+            ls -l build/
             exit 1
           fi
 
+          # Handle static library
           if [ -f "build/libcrypto.a" ]; then
+            echo "Copying static library"
             cp build/libcrypto.a dist/lib/
           else
-            echo "Error: Static library not found!"
+            echo "Error: Static library not found"
+            ls -l build/
             exit 1
           fi
 
-          # Copy headers (preserve directory structure)
+          # Handle headers
           if [ -d "include" ]; then
-            mkdir -p dist/include
+            echo "Copying headers"
             cp -r include/* dist/include/
           else
-            echo "Error: Include directory not found!"
+            echo "Error: Include directory not found"
             exit 1
           fi
 
           # Create pkg-config file
-          mkdir -p dist/pkgconfig
           cat > dist/pkgconfig/libcrypto.pc <<EOF
           prefix=/usr/local
           libdir=\${prefix}/lib
@@ -73,25 +103,21 @@ jobs:
           Cflags: -I\${includedir}
           EOF
 
-          # Verify final package
-          echo "Package contents:"
+          # Verify package
+          echo "Final package contents:"
           tree dist/
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+          echo "pkg-config contents:"
+          cat dist/pkgconfig/libcrypto.pc
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
         with:
-          name: libcrypto-${{ env.VERSION }}-linux
+          name: libcrypto-${{ env.VERSION }}
           path: dist/
-          retention-days: 1
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Create release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref }}
-          release_name: "Version ${{ env.VERSION }}"
-          body: "Pre-built cryptographic library package"
           files: |
             dist/lib/*
             dist/include/*
             dist/pkgconfig/libcrypto.pc
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
