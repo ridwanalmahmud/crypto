@@ -19,18 +19,13 @@ jobs:
             make \
             build-essential \
             tree
-      - name: Build with debug output
+      - name: Build
         run: |
           make clean
           mkdir -p build
-          make -j$(nproc) V=1
+          make -j$(nproc)
           echo "Build artifacts:"
           ls -l build/
-      - name: Verify build outputs
-        run: |
-          [ -f "build/libcrypto.a" ] || echo "Warning: Static library not built yet"
-          ls build/libcrypto.so* || echo "Warning: Shared library not built yet"
-          [ -d "include" ] || echo "Warning: Include directory not found"
       - name: Run tests
         run: |
           cd tests && make clean && make && make test
@@ -41,74 +36,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Rebuild for packaging
-        run: |
-          make clean
-          mkdir -p build
-          make -j$(nproc)
       - name: Determine version
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo "Building version: ${VERSION}"
+          echo "Packaging version: ${VERSION}"
       - name: Package artifacts
-        run: |
-          # Create directory structure
-          mkdir -p dist/{lib,include,pkgconfig}
-
-          # Handle shared libraries (more flexible matching)
-          SHARED_LIB=$(ls build/libcrypto.so* 2>/dev/null | head -n1)
-          if [ -n "$SHARED_LIB" ]; then
-            echo "Found shared library: $SHARED_LIB"
-            cp "$SHARED_LIB" dist/lib/
-            LIB_NAME=$(basename "$SHARED_LIB")
-            cd dist/lib
-            ln -sf "$LIB_NAME" libcrypto.so
-            cd -
-          else
-            echo "Error: No shared library found in build/"
-            ls -l build/
-            exit 1
-          fi
-
-          # Handle static library
-          if [ -f "build/libcrypto.a" ]; then
-            echo "Copying static library"
-            cp build/libcrypto.a dist/lib/
-          else
-            echo "Error: Static library not found"
-            ls -l build/
-            exit 1
-          fi
-
-          # Handle headers
-          if [ -d "include" ]; then
-            echo "Copying headers"
-            cp -r include/* dist/include/
-          else
-            echo "Error: Include directory not found"
-            exit 1
-          fi
-
-          # Create pkg-config file
-          cat > dist/pkgconfig/libcrypto.pc <<EOF
-          prefix=/usr/local
-          libdir=\${prefix}/lib
-          includedir=\${prefix}/include
-
-          Name: libcrypto
-          Description: Educational crypto library
-          Version: $VERSION
-          Libs: -L\${libdir} -lcrypto
-          Cflags: -I\${includedir}
-          EOF
-
-          # Verify package
-          echo "Final package contents:"
-          tree dist/
-          echo "pkg-config contents:"
-          cat dist/pkgconfig/libcrypto.pc
+        run: "# Create directory structure\nmkdir -p dist/{lib,include,pkgconfig}\n\n# Handle shared library\nif [ -f \"build/libcrypto.so\" ]; then\n  echo \"Found shared library\"\n  cp build/libcrypto.so dist/lib/\n  \n  # Only create versioned copy and symlink if version is specified\n  if [ -n \"$VERSION\" ]; then\n    cp build/libcrypto.so dist/lib/libcrypto.so.$VERSION\n    cd dist/lib\n    ln -sf libcrypto.so.$VERSION libcrypto.so\n    cd -\n  fi\nelse\n  echo \"Error: Shared library not found\"\n  ls -l build/\n  exit 1\nfi\n\n# Handle static library\nif [ -f \"build/libcrypto.a\" ]; then\n  echo \"Copying static library\"\n  cp build/libcrypto.a dist/lib/\nelse\n  echo \"Error: Static library not found\"\n  exit 1\nfi\n\n# Handle headers\nif [ -d \"include\" ] && [ \"$(ls -A include)\" ]; then\n  echo \"Copying headers\"\n  cp -r include/* dist/include/\nelse\n  echo \"Error: No headers found in include/\"\n  exit 1\nfi\n\n# Create pkg-config file\ncat > dist/pkgconfig/libcrypto.pc <<EOF\nprefix=/usr/local\nlibdir=\\${prefix}/lib\nincludedir=\\${prefix}/include\n\nName: libcrypto\nDescription: Educational crypto library\nVersion: $VERSION\nLibs: -L\\${libdir} -lcrypto\nCflags: -I\\${includedir}\nEOF\n\n# Verify package\necho \"Final package contents:\"\ntree dist/\n"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
