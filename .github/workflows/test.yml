@@ -21,6 +21,7 @@ jobs:
             tree
       - name: Build with debug output
         run: |
+          make clean
           mkdir -p build
           make -j$(nproc) V=1
           echo "Build artifacts:"
@@ -32,7 +33,7 @@ jobs:
           [ -d "include" ] || echo "Warning: Include directory not found"
       - name: Run tests
         run: |
-          cd tests && make test
+          cd tests && make clean && make && make test
   package:
     needs: build-and-test
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
